@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# env secrets
+.env
+*.env.local
+
+# Node (จะใช้ตอนทำ web/ ใน Phase 3)
+node_modules/
+dist/
+.vite/
+
+# OS / editor
+.DS_Store
+.vscode/
+*.log
+
+# docker
+db_data/
