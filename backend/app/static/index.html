@@ -67,6 +67,11 @@
   .legend span { display: inline-flex; align-items: center; gap: 4px; }
   .legend .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
   .map-popup-btn { width: auto; padding: 6px 10px; font-size: 13px; margin-top: 6px; margin-bottom: 0; }
+  @keyframes self-marker-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+  }
+  .self-marker-pulse { animation: self-marker-pulse 1.2s ease-in-out infinite; }
 </style>
 </head>
 <body>
@@ -243,6 +248,7 @@ function onPositionUpdate(pos) {
   if (!selfMarker) {
     selfMarker = L.circleMarker([lat, lng], {
       radius: 9, color: "#3b82f6", fillColor: "#3b82f6", fillOpacity: 0.95, weight: 2,
+      className: "self-marker-pulse",
     }).addTo(map);
     selfMarker.bindPopup("คุณ (ตำแหน่งล่าสุด)");
   } else {
