@@ -4,6 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>Walk &amp; Run — Test Client</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root {
     --bg: #0f172a;
@@ -60,6 +62,11 @@
   .teammate .dist.far { color: var(--warn); font-weight: 600; }
   .muted { color: var(--muted); font-size: 13px; }
   #logout { background: transparent; color: var(--muted); text-decoration: underline; font-weight: 400; }
+  #map { height: 260px; border-radius: 12px; overflow: hidden; margin-bottom: 12px; border: 1px solid var(--panel-border); }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .legend .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .map-popup-btn { width: auto; padding: 6px 10px; font-size: 13px; margin-top: 6px; margin-bottom: 0; }
 </style>
 </head>
 <body>
@@ -142,6 +149,14 @@ async function renderMain() {
     <p class="muted">ทีม ID: ${member.team_id.slice(0, 8)}…</p>
     <div id="toast"></div>
 
+    <div id="map"></div>
+    <div class="legend">
+      <span><span class="dot" style="background:#22c55e;"></span>ผ่านแล้ว</span>
+      <span><span class="dot" style="background:#ef4444;"></span>ยังไม่เจอ</span>
+      <span><span class="dot" style="background:#3b82f6;"></span>คุณ</span>
+      <span><span class="dot" style="background:#a855f7;"></span>เพื่อนร่วมทีม</span>
+    </div>
+
     <h2>Checkpoint</h2>
     <div class="panel">
       <div class="row">
@@ -181,6 +196,69 @@ function showToast(message, ok) {
 }
 
 let lastCompletedSlugs = [];
+let lastCheckpoints = [];
+let lastTeamStatus = null;
+let mapInstance = null;
+let mapLayers = [];
+
+function ensureMap() {
+  if (mapInstance) return mapInstance;
+  mapInstance = L.map("map").setView([13.7437, 100.4888], 15);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "&copy; OpenStreetMap contributors",
+    maxZoom: 19,
+  }).addTo(mapInstance);
+  return mapInstance;
+}
+
+// Called via inline onclick from inside a Leaflet popup, where `this` is the
+// clicked button element — reuses the same checkIn() the list view uses.
+function checkInFromMap(btnEl, checkpointId) {
+  checkIn(checkpointId, btnEl);
+}
+
+function updateMap() {
+  const map = ensureMap();
+  mapLayers.forEach((m) => map.removeLayer(m));
+  mapLayers = [];
+
+  const bounds = [];
+  const member = getMember();
+
+  lastCheckpoints.forEach((c) => {
+    const done = lastCompletedSlugs.includes(c.slug);
+    const color = done ? "#22c55e" : "#ef4444";
+    const name = c.name_i18n.th || c.name_i18n.en || c.slug;
+    const marker = L.circleMarker([c.lat, c.lng], {
+      radius: 10, color, fillColor: color, fillOpacity: 0.8, weight: 2,
+    }).addTo(map);
+    marker.bindPopup(`
+      <strong>${c.sequence}. ${name}</strong><br/>
+      ${done ? "✅ ผ่านแล้ว" : "❌ ยังไม่เจอ"}
+      ${done ? "" : `<br/><button class="primary map-popup-btn" onclick="checkInFromMap(this, '${c.id}')">เช็คอินจากตรงนี้</button>`}
+    `);
+    mapLayers.push(marker);
+    bounds.push([c.lat, c.lng]);
+  });
+
+  if (lastTeamStatus) {
+    lastTeamStatus.teammates.forEach((t) => {
+      if (t.lat == null || t.lng == null) return;
+      const isSelf = t.member_id === member.member_id;
+      const color = isSelf ? "#3b82f6" : "#a855f7";
+      const marker = L.circleMarker([t.lat, t.lng], {
+        radius: 8, color, fillColor: color, fillOpacity: 0.9, weight: 2,
+      }).addTo(map);
+      marker.bindPopup(isSelf ? "คุณ" : t.display_name);
+      mapLayers.push(marker);
+      bounds.push([t.lat, t.lng]);
+    });
+  }
+
+  if (bounds.length > 0) {
+    map.fitBounds(bounds, { padding: [30, 30], maxZoom: 17 });
+  }
+}
 
 async function loadCheckpoints() {
   const slug = document.getElementById("communitySlug").value.trim();
@@ -189,30 +267,33 @@ async function loadCheckpoints() {
   list.innerHTML = "กำลังโหลด...";
   try {
     const checkpoints = await api(`/checkpoints?community_slug=${encodeURIComponent(slug)}`);
+    lastCheckpoints = checkpoints;
     if (checkpoints.length === 0) {
       list.innerHTML = `<span class="muted">ไม่พบ checkpoint สำหรับ community นี้</span>`;
-      return;
-    }
-    list.innerHTML = checkpoints.map((c) => {
-      const done = lastCompletedSlugs.includes(c.slug);
-      return `
-      <div class="checkpoint">
-        <div>
-          <div class="name">${c.sequence}. ${c.name_i18n.th || c.name_i18n.en || c.slug}
-            <span class="badge ${done ? "done" : "pending"}">${done ? "ผ่านแล้ว" : "ยังไม่ผ่าน"}</span>
+    } else {
+      list.innerHTML = checkpoints.map((c) => {
+        const done = lastCompletedSlugs.includes(c.slug);
+        return `
+        <div class="checkpoint">
+          <div>
+            <div class="name">${c.sequence}. ${c.name_i18n.th || c.name_i18n.en || c.slug}
+              <span class="badge ${done ? "done" : "pending"}">${done ? "ผ่านแล้ว" : "ยังไม่ผ่าน"}</span>
+            </div>
+            <div class="status">${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}</div>
           </div>
-          <div class="status">${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}</div>
+          <button class="${done ? "secondary" : "primary"} small" data-checkpoint-id="${c.id}">เช็คอิน</button>
         </div>
-        <button class="${done ? "secondary" : "primary"} small" data-checkpoint-id="${c.id}">เช็คอิน</button>
-      </div>
-    `;
-    }).join("");
-    list.querySelectorAll("[data-checkpoint-id]").forEach((btn) => {
-      btn.onclick = () => checkIn(btn.getAttribute("data-checkpoint-id"), btn);
-    });
+      `;
+      }).join("");
+      list.querySelectorAll("[data-checkpoint-id]").forEach((btn) => {
+        btn.onclick = () => checkIn(btn.getAttribute("data-checkpoint-id"), btn);
+      });
+    }
   } catch (e) {
     list.innerHTML = `<span class="muted">โหลดไม่สำเร็จ: ${e.message}</span>`;
+    lastCheckpoints = [];
   }
+  updateMap();
 }
 
 async function checkIn(checkpointId, btn) {
@@ -252,6 +333,7 @@ async function refreshStatus() {
   box.innerHTML = "กำลังโหลด...";
   try {
     const status = await api("/teams/me/status");
+    lastTeamStatus = status;
     lastCompletedSlugs = status.completed_checkpoints;
     const member = getMember();
     const doneCount = status.completed_checkpoints.length;
