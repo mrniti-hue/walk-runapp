@@ -150,6 +150,7 @@ async function renderMain() {
     <div id="toast"></div>
 
     <div id="map"></div>
+    <p class="muted" id="trackingStatus">กำลังขอสิทธิ์เข้าถึงตำแหน่ง...</p>
     <div class="legend">
       <span><span class="dot" style="background:#22c55e;"></span>ผ่านแล้ว</span>
       <span><span class="dot" style="background:#ef4444;"></span>ยังไม่เจอ</span>
@@ -181,11 +182,13 @@ async function renderMain() {
     await loadCheckpoints();
   };
   document.getElementById("logout").onclick = () => {
+    stopWatchingPosition();
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(MEMBER_KEY);
     renderLogin();
   };
 
+  startWatchingPosition();
   await refreshStatus();
   await loadCheckpoints();
 }
@@ -200,6 +203,62 @@ let lastCheckpoints = [];
 let lastTeamStatus = null;
 let mapInstance = null;
 let mapLayers = [];
+let selfMarker = null;
+let watchId = null;
+let lastPositionPushAt = 0;
+// Push to the server at most this often — watchPosition can fire every
+// second or two while walking, and every ping here is a checkpoint-unrelated
+// write; the map itself already updates instantly from the local reading.
+const POSITION_PUSH_INTERVAL_MS = 10000;
+
+function startWatchingPosition() {
+  if (!navigator.geolocation) return;
+  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  const el = document.getElementById("trackingStatus");
+  watchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      if (el) el.textContent = "📍 กำลังติดตามตำแหน่งคุณแบบเรียลไทม์";
+      onPositionUpdate(pos);
+    },
+    (err) => {
+      if (el) el.textContent = "ไม่สามารถติดตามตำแหน่งได้: " + err.message;
+    },
+    { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+  );
+}
+
+function stopWatchingPosition() {
+  if (watchId !== null) {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+  }
+  selfMarker = null;
+}
+
+function onPositionUpdate(pos) {
+  const lat = pos.coords.latitude;
+  const lng = pos.coords.longitude;
+  const map = ensureMap();
+
+  if (!selfMarker) {
+    selfMarker = L.circleMarker([lat, lng], {
+      radius: 9, color: "#3b82f6", fillColor: "#3b82f6", fillOpacity: 0.95, weight: 2,
+    }).addTo(map);
+    selfMarker.bindPopup("คุณ (ตำแหน่งล่าสุด)");
+  } else {
+    selfMarker.setLatLng([lat, lng]);
+  }
+
+  const now = Date.now();
+  if (now - lastPositionPushAt < POSITION_PUSH_INTERVAL_MS) return;
+  lastPositionPushAt = now;
+  api("/teams/me/position", {
+    method: "POST",
+    body: JSON.stringify({
+      lat, lng, accuracy_m: pos.coords.accuracy, reported_at: new Date().toISOString(),
+    }),
+  }).catch((e) => console.warn("position push failed:", e.message));
+}
 
 function ensureMap() {
   if (mapInstance) return mapInstance;
@@ -243,17 +302,20 @@ function updateMap() {
 
   if (lastTeamStatus) {
     lastTeamStatus.teammates.forEach((t) => {
-      if (t.lat == null || t.lng == null) return;
-      const isSelf = t.member_id === member.member_id;
-      const color = isSelf ? "#3b82f6" : "#a855f7";
+      // Skip self here — the live watchPosition marker (see selfMarker below)
+      // already represents you, and is fresher than whatever was last pushed
+      // to the server.
+      if (t.lat == null || t.lng == null || t.member_id === member.member_id) return;
       const marker = L.circleMarker([t.lat, t.lng], {
-        radius: 8, color, fillColor: color, fillOpacity: 0.9, weight: 2,
+        radius: 8, color: "#a855f7", fillColor: "#a855f7", fillOpacity: 0.9, weight: 2,
       }).addTo(map);
-      marker.bindPopup(isSelf ? "คุณ" : t.display_name);
+      marker.bindPopup(t.display_name);
       mapLayers.push(marker);
       bounds.push([t.lat, t.lng]);
     });
   }
+
+  if (selfMarker) bounds.push(selfMarker.getLatLng());
 
   if (bounds.length > 0) {
     map.fitBounds(bounds, { padding: [30, 30], maxZoom: 17 });

@@ -16,6 +16,7 @@ from app.schemas.team import (
     LoginRequest,
     LoginResponse,
     MemberCredential,
+    PositionSubmitRequest,
     TeamRegisterRequest,
     TeamRegisterResponse,
     TeamStatusResponse,
@@ -97,6 +98,37 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     return LoginResponse(
         access_token=token, member_id=str(member.id), team_id=str(member.team_id), display_name=member.display_name
     )
+
+
+@router.post("/me/position", status_code=status.HTTP_204_NO_CONTENT)
+async def update_my_position(
+    payload: PositionSubmitRequest,
+    member: TeamMember = Depends(get_current_member),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Live location ping for the teammate map — separate from checkpoint claims
+    on purpose. A claim means "evaluate me against this checkpoint"; this just
+    means "here's where I am right now", sent continuously while walking, so
+    it skips the accuracy/radius checks entirely rather than rejecting most of
+    a watchPosition stream.
+    """
+    position = await db.get(MemberPosition, member.id)
+    if position is None:
+        db.add(
+            MemberPosition(
+                member_id=member.id,
+                team_id=member.team_id,
+                lat=payload.lat,
+                lng=payload.lng,
+                accuracy_m=payload.accuracy_m,
+                reported_at=payload.reported_at,
+            )
+        )
+    else:
+        position.lat, position.lng, position.accuracy_m = payload.lat, payload.lng, payload.accuracy_m
+        position.reported_at = payload.reported_at
+    await db.commit()
 
 
 @router.get("/me/status", response_model=TeamStatusResponse)
