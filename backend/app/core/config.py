@@ -12,10 +12,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://walkrun:walkrun_dev_pw@db:5432/walkrun"
     jwt_secret: str = "change-me"
 
-    line_login_channel_id: str = ""
-    line_login_channel_secret: str = ""
-    google_client_id: str = ""
-    google_client_secret: str = ""
+    # Mixed into every passkey before hashing, so a leaked database dump alone
+    # cannot be used to recover passkeys. Changing this invalidates all issued
+    # passkeys — never rotate it mid-event.
+    passkey_pepper: str = "change-me"
 
 
 settings = Settings()

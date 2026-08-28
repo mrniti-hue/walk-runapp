@@ -1,4 +1,14 @@
+from app.models.checkpoint import Checkpoint
 from app.models.community import Community
-from app.models.user import User
+from app.models.team import Team, TeamMember
+from app.models.tracking import CheckpointClaim, CheckpointProgress, MemberPosition
 
-__all__ = ["Community", "User"]
+__all__ = [
+    "Checkpoint",
+    "CheckpointClaim",
+    "CheckpointProgress",
+    "Community",
+    "MemberPosition",
+    "Team",
+    "TeamMember",
+]
