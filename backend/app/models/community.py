@@ -27,6 +27,10 @@ class Community(Base):
     # radius together — this is what stops a team splitting up to farm
     # checkpoints in parallel. Teams vary 2-4 people, so 2 is the floor.
     quorum_min_members: Mapped[int] = mapped_column(Integer, default=2)
+    # How close together (in server-received time) members' arrivals must be
+    # to count as "together" — this is what lets the quorum rule tell a team
+    # that walked together from one that split up and re-converged by luck.
+    quorum_window_seconds: Mapped[int] = mapped_column(Integer, default=300)
     # Urban Bangkok GPS drifts badly between tall buildings; calibrate against
     # the survey in Gps/ before changing.
     default_radius_m: Mapped[int] = mapped_column(Integer, default=40)
