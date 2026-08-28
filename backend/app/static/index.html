@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Walk &amp; Run — Test Client</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-border: #334155;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #22c55e;
+    --danger: #ef4444;
+    --warn: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #app { max-width: 480px; margin: 0 auto; padding: 16px; padding-bottom: 80px; }
+  h1 { font-size: 20px; margin: 8px 0 16px; }
+  h2 { font-size: 15px; color: var(--muted); margin: 24px 0 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .panel { background: var(--panel); border: 1px solid var(--panel-border); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input {
+    width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--panel-border);
+    background: #0b1220; color: var(--text); font-size: 16px; margin-bottom: 10px;
+  }
+  button {
+    width: 100%; padding: 14px; border-radius: 8px; border: none; font-size: 16px; font-weight: 600;
+    cursor: pointer; margin-bottom: 8px;
+  }
+  button.primary { background: var(--accent); color: #06240f; }
+  button.secondary { background: #334155; color: var(--text); }
+  button.small { width: auto; padding: 8px 14px; font-size: 14px; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .checkpoint {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 0; border-bottom: 1px solid var(--panel-border);
+  }
+  .checkpoint:last-child { border-bottom: none; }
+  .checkpoint .name { font-weight: 600; }
+  .checkpoint .status { font-size: 12px; color: var(--muted); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .badge.done { background: rgba(34,197,94,0.15); color: var(--accent); }
+  .badge.pending { background: rgba(148,163,184,0.15); color: var(--muted); }
+  .toast { padding: 10px 12px; border-radius: 8px; font-size: 14px; margin-bottom: 12px; }
+  .toast.ok { background: rgba(34,197,94,0.15); color: var(--accent); }
+  .toast.err { background: rgba(239,68,68,0.15); color: var(--danger); }
+  .teammate { display: flex; justify-content: space-between; padding: 8px 0; font-size: 14px; }
+  .teammate .dist { color: var(--muted); }
+  .teammate .dist.far { color: var(--warn); font-weight: 600; }
+  .muted { color: var(--muted); font-size: 13px; }
+  #logout { background: transparent; color: var(--muted); text-decoration: underline; font-weight: 400; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+const API = "";
+const TOKEN_KEY = "walkrun_token";
+const MEMBER_KEY = "walkrun_member";
+const COMMUNITY_KEY = "walkrun_community";
+
+function getToken() { return localStorage.getItem(TOKEN_KEY); }
+function getMember() { try { return JSON.parse(localStorage.getItem(MEMBER_KEY)); } catch { return null; } }
+function getCommunitySlug() { return localStorage.getItem(COMMUNITY_KEY) || "talat-phlu"; }
+
+async function api(path, options = {}) {
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  const token = getToken();
+  if (token) headers["Authorization"] = "Bearer " + token;
+  const res = await fetch(API + path, { ...options, headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+    throw new Error(detail || ("HTTP " + res.status));
+  }
+  return data;
+}
+
+function getPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error("geolocation_unsupported"));
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy_m: pos.coords.accuracy,
+      }),
+      (err) => reject(new Error(err.message)),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  });
+}
+
+// ---- render: login screen ----
+function renderLogin(message) {
+  const app = document.getElementById("app");
+  app.innerHTML = `
+    <h1>Walk &amp; Run — เข้าสู่ระบบ</h1>
+    ${message ? `<div class="toast err">${message}</div>` : ""}
+    <div class="panel">
+      <label for="passkey">Passkey ของคุณ</label>
+      <input id="passkey" placeholder="เช่น 3E8XWQGKD8" autocapitalize="characters" autocomplete="off" />
+      <button class="primary" id="loginBtn">เข้าสู่ระบบ</button>
+      <p class="muted">Passkey ได้จากหัวหน้าทีมตอนลงทะเบียน — พิมพ์ตัวใหญ่เล็กไม่สำคัญ</p>
+    </div>
+  `;
+  document.getElementById("loginBtn").onclick = async () => {
+    const passkey = document.getElementById("passkey").value.trim();
+    if (!passkey) return;
+    const btn = document.getElementById("loginBtn");
+    btn.disabled = true;
+    btn.textContent = "กำลังเข้าสู่ระบบ...";
+    try {
+      const data = await api("/teams/login", { method: "POST", body: JSON.stringify({ passkey }) });
+      localStorage.setItem(TOKEN_KEY, data.access_token);
+      localStorage.setItem(MEMBER_KEY, JSON.stringify(data));
+      renderMain();
+    } catch (e) {
+      renderLogin(e.message === "invalid_passkey" ? "Passkey ไม่ถูกต้อง" : e.message);
+    }
+  };
+}
+
+// ---- render: main screen ----
+async function renderMain() {
+  const member = getMember();
+  const app = document.getElementById("app");
+  app.innerHTML = `
+    <h1>สวัสดี ${member.display_name}</h1>
+    <p class="muted">ทีม ID: ${member.team_id.slice(0, 8)}…</p>
+    <div id="toast"></div>
+
+    <h2>Checkpoint</h2>
+    <div class="panel">
+      <div class="row">
+        <input id="communitySlug" value="${getCommunitySlug()}" placeholder="community slug" />
+        <button class="secondary small" id="loadBtn" style="flex:0 0 auto;">โหลด</button>
+      </div>
+      <div id="checkpointList" class="muted">ยังไม่ได้โหลดจุดเช็คอิน</div>
+    </div>
+
+    <h2>สถานะทีม</h2>
+    <div class="panel">
+      <div id="teamStatus" class="muted">กำลังโหลด...</div>
+      <button class="secondary" id="refreshBtn">รีเฟรชสถานะทีม</button>
+    </div>
+
+    <button id="logout">ออกจากระบบ</button>
+  `;
+
+  document.getElementById("loadBtn").onclick = loadCheckpoints;
+  document.getElementById("refreshBtn").onclick = async () => {
+    await refreshStatus();
+    await loadCheckpoints();
+  };
+  document.getElementById("logout").onclick = () => {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(MEMBER_KEY);
+    renderLogin();
+  };
+
+  await refreshStatus();
+  await loadCheckpoints();
+}
+
+function showToast(message, ok) {
+  document.getElementById("toast").innerHTML =
+    `<div class="toast ${ok ? "ok" : "err"}">${message}</div>`;
+}
+
+let lastCompletedSlugs = [];
+
+async function loadCheckpoints() {
+  const slug = document.getElementById("communitySlug").value.trim();
+  localStorage.setItem(COMMUNITY_KEY, slug);
+  const list = document.getElementById("checkpointList");
+  list.innerHTML = "กำลังโหลด...";
+  try {
+    const checkpoints = await api(`/checkpoints?community_slug=${encodeURIComponent(slug)}`);
+    if (checkpoints.length === 0) {
+      list.innerHTML = `<span class="muted">ไม่พบ checkpoint สำหรับ community นี้</span>`;
+      return;
+    }
+    list.innerHTML = checkpoints.map((c) => {
+      const done = lastCompletedSlugs.includes(c.slug);
+      return `
+      <div class="checkpoint">
+        <div>
+          <div class="name">${c.sequence}. ${c.name_i18n.th || c.name_i18n.en || c.slug}
+            <span class="badge ${done ? "done" : "pending"}">${done ? "ผ่านแล้ว" : "ยังไม่ผ่าน"}</span>
+          </div>
+          <div class="status">${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}</div>
+        </div>
+        <button class="${done ? "secondary" : "primary"} small" data-checkpoint-id="${c.id}">เช็คอิน</button>
+      </div>
+    `;
+    }).join("");
+    list.querySelectorAll("[data-checkpoint-id]").forEach((btn) => {
+      btn.onclick = () => checkIn(btn.getAttribute("data-checkpoint-id"), btn);
+    });
+  } catch (e) {
+    list.innerHTML = `<span class="muted">โหลดไม่สำเร็จ: ${e.message}</span>`;
+  }
+}
+
+async function checkIn(checkpointId, btn) {
+  btn.disabled = true;
+  btn.textContent = "กำลังหาตำแหน่ง...";
+  try {
+    const pos = await getPosition();
+    btn.textContent = "กำลังส่ง...";
+    const result = await api(`/checkpoints/${checkpointId}/claim`, {
+      method: "POST",
+      body: JSON.stringify({ ...pos, reported_at: new Date().toISOString() }),
+    });
+    if (result.accepted) {
+      showToast(
+        result.checkpoint_completed
+          ? `เช็คอินสำเร็จ! ทีมผ่านจุดนี้แล้ว 🎉 (ระยะ ${result.distance_m.toFixed(0)}m)`
+          : `รับตำแหน่งแล้ว — รอเพื่อนร่วมทีมมาถึงด้วย (ระยะ ${result.distance_m.toFixed(0)}m)`,
+        true
+      );
+    } else {
+      const reasons = { too_far: "อยู่ไกลจากจุดเกินไป", low_accuracy: "สัญญาณ GPS ไม่แม่นพอ รอสักครู่แล้วลองใหม่" };
+      showToast(reasons[result.reject_reason] || result.reject_reason, false);
+    }
+    await refreshStatus();
+    await loadCheckpoints();
+  } catch (e) {
+    showToast("เช็คอินไม่สำเร็จ: " + e.message, false);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "เช็คอิน";
+  }
+}
+
+async function refreshStatus() {
+  const box = document.getElementById("teamStatus");
+  if (!box) return;
+  box.innerHTML = "กำลังโหลด...";
+  try {
+    const status = await api("/teams/me/status");
+    lastCompletedSlugs = status.completed_checkpoints;
+    const member = getMember();
+    const doneCount = status.completed_checkpoints.length;
+    const teammatesHtml = status.teammates
+      .filter((t) => t.member_id !== member.member_id)
+      .map((t) => {
+        const distText = t.distance_from_you_m == null
+          ? "ยังไม่ส่งตำแหน่ง"
+          : `${t.distance_from_you_m.toFixed(0)}m จากคุณ`;
+        const far = t.distance_from_you_m != null && t.distance_from_you_m > 300;
+        return `<div class="teammate"><span>${t.display_name}</span><span class="dist ${far ? "far" : ""}">${distText}</span></div>`;
+      }).join("");
+    box.innerHTML = `
+      <p><strong>${status.team_name}</strong> — เช็คอินแล้ว ${doneCount} จุด</p>
+      ${teammatesHtml || '<p class="muted">ยังไม่มีเพื่อนร่วมทีม</p>'}
+    `;
+  } catch (e) {
+    box.innerHTML = `<span class="muted">โหลดสถานะไม่สำเร็จ: ${e.message}</span>`;
+  }
+}
+
+// ---- boot ----
+if (getToken() && getMember()) {
+  renderMain();
+} else {
+  renderLogin();
+}
+</script>
+</body>
+</html>
